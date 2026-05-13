@@ -27,7 +27,7 @@ class Database:
                     {'plan_id': 'monthly', 'name': '1 Month', 'price': 99, 'currency': 'INR', 'duration_days': 30, 'monitor_limit': 20, 'check_interval': 1, 'active': True},
                     {'plan_id': 'lifetime', 'name': 'Lifetime', 'price': 999, 'currency': 'INR', 'duration_days': 36500, 'monitor_limit': 50, 'check_interval': 1, 'active': True}
                 ],
-                'contact': {'username': '@admin', 'url': 'https://t.me/admin', 'text': '📞 Contact Admin'}
+                'contact': {'username': '@SonuPorsa', 'url': 'https://t.me/SonuPorsa', 'text': '📞 Contact Admin'}
             })
         if not await self.db.force_join.find_one({}):
             await self.db.force_join.insert_one({'channels': [], 'enabled': False})
@@ -114,7 +114,7 @@ class Database:
     # ========== CONTACT ==========
     async def get_contact(self):
         s = await self.db.payment_settings.find_one({})
-        return s.get('contact', {'username': '@admin', 'url': 'https://t.me/admin', 'text': '📞 Contact'}) if s else {}
+        return s.get('contact', {'username': '@SonuPorsa', 'url': 'https://t.me/SonuPorsa', 'text': '📞 Contact'}) if s else {}
     
     async def update_contact(self, data):
         for k, v in data.items(): await self.db.payment_settings.update_one({}, {'$set': {f'contact.{k}': v}})
