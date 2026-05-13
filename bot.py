@@ -3,236 +3,169 @@ import asyncio, sys, os
 from flask import Flask
 from threading import Thread
 from pyrogram import Client, filters
-from pyrogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
+from pyrogram.types import CallbackQuery, Message
 from database import Database
 from config import API_ID, API_HASH, BOT_TOKEN, PORT, ADMIN_IDS
 from utils import Scheduler
 from force_check import check_force_join
 
-print(f"🔍 Config Check:")
-print(f"   API_ID: {API_ID}")
-print(f"   API_HASH: {'***' if API_HASH else 'MISSING!'}")
-print(f"   BOT_TOKEN: {'***' if BOT_TOKEN else 'MISSING!'}")
-print(f"   ADMIN_IDS: {ADMIN_IDS}")
-print(f"   PORT: {PORT}")
+print(f"🔧 API_ID={API_ID}, PORT={PORT}, ADMINS={ADMIN_IDS}")
 
-# Flask for Render
+# Flask
 app = Flask(__name__)
-
 @app.route('/')
-def home():
-    return "Bot Running!"
-
+def home(): return "Bot Running!"
 @app.route('/health')
-def health():
-    return "OK", 200
+def health(): return "OK", 200
+def run_flask(): app.run(host='0.0.0.0', port=PORT, debug=False)
 
-def run_flask():
-    app.run(host='0.0.0.0', port=PORT, debug=False)
-
-# Pyrogram Client
+# Client
 client = Client("uptime_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
-
-# Database
 db = Database()
 
-# Import all handlers
+# ============ IMPORTS (All at top) ============
 import handlers_user
 import handlers_payment
 import admin_commands
 import admin_force
 
-# Import callbacks
 from callbacks_a import *
 from callbacks_b import *
 from callbacks_c import *
+
+# Shared states from callback files
 from callbacks_b import user_states
-
-# Register callbacks
-@client.on_callback_query()
-async def callback_handler(client, c: CallbackQuery):
-    print(f"📱 Callback: {c.data} from {c.from_user.id}")
-    
-    if not await check_force_join(client, c):
-        return
-    
-    data = c.data
-    
-    # User callbacks
-    if data == 'profile':
-        await profile_cb(client, c)
-    elif data == 'my_monitors':
-        await my_monitors_cb(client, c)
-    elif data.startswith('detail_'):
-        await monitor_detail_cb(client, c)
-    elif data.startswith('refresh_'):
-        await refresh_cb(client, c)
-    elif data.startswith('toggle_'):
-        await toggle_cb(client, c)
-    elif data.startswith('delete_'):
-        await delete_cb(client, c)
-    elif data.startswith('confirmdel_'):
-        await confirm_del_cb(client, c)
-    elif data == 'main_menu':
-        await main_menu_cb(client, c)
-    
-    # Payment callbacks
-    elif data == 'premium_menu':
-        await premium_menu_cb(client, c)
-    elif data.startswith('buy_'):
-        await select_method_cb(client, c)
-    elif data == 'pay_upi':
-        await pay_upi_cb(client, c)
-    elif data == 'pay_bank':
-        await pay_bank_cb(client, c)
-    
-    # Admin callbacks
-    elif data == 'admin_panel':
-        await admin_panel_cb(client, c)
-    elif data == 'admin_users':
-        await admin_users_cb(client, c)
-    elif data.startswith('user_'):
-        await user_detail_cb(client, c)
-    elif data.startswith('ban_'):
-        await ban_cb(client, c)
-    elif data.startswith('setprem_'):
-        await set_premium_cb(client, c)
-    elif data == 'verify_payments':
-        await verify_payments_cb(client, c)
-    elif data.startswith('verify_'):
-        await verify_payment_cb(client, c)
-    elif data.startswith('reject_'):
-        await reject_cb(client, c)
-    elif data == 'admin_stats':
-        await admin_stats_cb(client, c)
-    elif data == 'export_all':
-        await export_all_cb(client, c)
-    elif data.startswith('exportusr_'):
-        uid = int(data.replace('exportusr_', ''))
-        text = await db.generate_file(uid)
-        filename = f"user_{uid}.txt"
-        with open(filename, 'w') as f: f.write(text)
-        await client.send_document(c.from_user.id, filename)
-        await c.answer("Exported!")
-    elif data == 'edit_contact':
-        await edit_contact_cb(client, c)
-    elif data == 'check_fj':
-        from force_check import check_force_join_callback
-        await check_force_join_callback(client, c)
-    elif data == 'add_monitor':
-        limit = await db.get_monitor_limit(c.from_user.id)
-        user = await db.get_user(c.from_user.id)
-        if user and user['monitor_count'] >= limit:
-            await c.edit_message_text(f"❌ Limit reached ({limit})!", reply_markup=back_button("main_menu"))
-        else:
-            user_states[c.from_user.id] = {'waiting': 'add_url'}
-            await c.edit_message_text("🔗 Send URL:\nExample: https://google.com")
-    
-    # Admin extra callbacks
-    elif data == 'admin_plans':
-        await admin_plans_cb(client, c)
-    elif data.startswith('plan_') and not data.startswith('plan_detail_'):
-        await plan_detail_cb(client, c)
-    elif data.startswith('delplan_'):
-        await delete_plan_cb(client, c)
-    elif data.startswith('toggleplan_'):
-        await toggle_plan_cb(client, c)
-    elif data == 'edit_methods':
-        await edit_methods_cb(client, c)
-    elif data.startswith('edit_upi'):
-        await edit_upi_cb(client, c)
-    elif data.startswith('edit_paypal'):
-        await edit_paypal_cb(client, c)
-    elif data.startswith('edit_bank'):
-        await edit_bank_cb(client, c)
-    elif data == 'add_plan':
-        await add_plan_cb(client, c)
-    elif data == 'fj_menu':
-        await fj_menu_cb(client, c)
-    elif data == 'fj_toggle':
-        await fj_toggle_cb(client, c)
-    elif data.startswith('fj_remove_'):
-        cid = int(data.replace('fj_remove_', ''))
-        await db.remove_fj_channel(cid)
-        await fj_menu_cb(client, c)
-    elif data == 'fj_add':
-        from callbacks_c import admin_states
-        admin_states[c.from_user.id] = {'action': 'fj_add'}
-        await c.edit_message_text("📢 Send channel ID or @username")
-    elif data == 'broadcast':
-        from callbacks_c import admin_states
-        admin_states[c.from_user.id] = {'action': 'broadcast'}
-        await c.edit_message_text("📨 Send message to broadcast:")
-    
-    await c.answer()
-
-# Handle all messages
 from callbacks_c import admin_states, handle_admin_msg
 
-@client.on_message(filters.private & filters.text)
-async def on_all_text(client, message):
-    uid = message.from_user.id
-    text = message.text or ""
+# ============ CALLBACK ROUTER ============
+@client.on_callback_query()
+async def on_callback(client, cb: CallbackQuery):
+    data = cb.data
+    uid = cb.from_user.id
+    print(f"📱 Callback: {data} | User: {uid}")
     
-    print(f"💬 Message: '{text}' from {uid}")
-    
-    # Check force join for non-admins
-    if uid not in ADMIN_IDS:
-        if not await check_force_join(client, message):
-            return
-    
-    # Handle commands first (they're already handled by decorators)
-    if text.startswith('/'):
+    if not await check_force_join(client, cb):
         return
     
-    # Admin states
+    # User callbacks
+    if data == 'profile': await profile_cb(client, cb)
+    elif data == 'my_monitors': await my_monitors_cb(client, cb)
+    elif data == 'main_menu': await main_menu_cb(client, cb)
+    elif data == 'premium_menu': await premium_menu_cb(client, cb)
+    
+    elif data == 'add_monitor':
+        limit = await db.get_monitor_limit(uid)
+        user = await db.get_user(uid)
+        if user and user['monitor_count'] >= limit:
+            from keyboards_a import back_button
+            await cb.edit_message_text(f"❌ Limit: {limit}", reply_markup=back_button("main_menu"))
+        else:
+            user_states[uid] = {'waiting': 'add_url'}
+            await cb.edit_message_text("🔗 Send URL (https://example.com):")
+    
+    elif data.startswith('detail_'): await monitor_detail_cb(client, cb)
+    elif data.startswith('refresh_'): await refresh_cb(client, cb)
+    elif data.startswith('toggle_'): await toggle_cb(client, cb)
+    elif data.startswith('delete_'): await delete_cb(client, cb)
+    elif data.startswith('confirmdel_'): await confirm_del_cb(client, cb)
+    elif data.startswith('buy_'): await select_method_cb(client, cb)
+    elif data == 'pay_upi': await pay_upi_cb(client, cb)
+    elif data == 'pay_bank': await pay_bank_cb(client, cb)
+    
+    # Admin callbacks
+    elif data == 'admin_panel': await admin_panel_cb(client, cb)
+    elif data == 'admin_users': await admin_users_cb(client, cb)
+    elif data.startswith('user_'): await user_detail_cb(client, cb)
+    elif data.startswith('ban_'): await ban_cb(client, cb)
+    elif data.startswith('setprem_'): await set_premium_cb(client, cb)
+    elif data == 'verify_payments': await verify_payments_cb(client, cb)
+    elif data.startswith('verify_'): await verify_payment_cb(client, cb)
+    elif data.startswith('reject_'): await reject_cb(client, cb)
+    elif data == 'edit_contact': await edit_contact_cb(client, cb)
+    elif data == 'admin_stats': await admin_stats_cb(client, cb)
+    elif data == 'export_all': await export_all_cb(client, cb)
+    elif data.startswith('exportusr_'):
+        uid2 = int(data.replace('exportusr_', ''))
+        txt = await db.generate_file(uid2)
+        fn = f"user_{uid2}.txt"
+        with open(fn, 'w') as f: f.write(txt)
+        await client.send_document(uid, fn)
+    
+    elif data == 'admin_plans': await admin_plans_cb(client, cb)
+    elif data.startswith('plan_'): await plan_detail_cb(client, cb)
+    elif data.startswith('delplan_'): await delete_plan_cb(client, cb)
+    elif data.startswith('toggleplan_'): await toggle_plan_cb(client, cb)
+    elif data == 'edit_methods': await edit_methods_cb(client, cb)
+    
+    # FJ callbacks
+    elif data == 'fj_menu': await fj_menu_cb(client, cb)
+    elif data == 'fj_toggle': await fj_toggle_cb(client, cb)
+    elif data.startswith('fj_remove_'):
+        await db.remove_fj_channel(int(data.replace('fj_remove_', '')))
+        await fj_menu_cb(client, cb)
+    elif data == 'fj_add':
+        admin_states[uid] = {'action': 'fj_add'}
+        await cb.edit_message_text("📢 Send channel ID or @username:")
+    elif data == 'broadcast':
+        admin_states[uid] = {'action': 'broadcast'}
+        await cb.edit_message_text("📨 Send message to broadcast:")
+    
+    elif data == 'check_fj':
+        from force_check import check_force_join_callback
+        await check_force_join_callback(client, cb)
+    
+    await cb.answer()
+
+# ============ MESSAGE HANDLER ============
+@client.on_message(filters.text & filters.private)
+async def on_message(client, msg: Message):
+    uid = msg.from_user.id
+    txt = msg.text or ""
+    
+    # Skip commands (handled by decorators in other files)
+    if txt.startswith('/'): return
+    
+    print(f"💬 Message: '{txt[:30]}' | User: {uid}")
+    
+    # Force join check
+    if uid not in ADMIN_IDS:
+        if not await check_force_join(client, msg):
+            return
+    
+    # Admin states (FJ add, broadcast)
     if uid in admin_states:
         action = admin_states[uid].get('action')
         
         if action == 'fj_add':
             try:
-                chat_id = None
-                txt = text.strip()
-                if txt.startswith('@'): txt = txt[1:]
-                
-                try: chat_id = int(txt)
-                except: pass
-                
-                if chat_id:
-                    chat = await client.get_chat(chat_id)
-                else:
-                    chat = await client.get_chat(f"@{txt}")
+                t = txt.strip().replace('@', '')
+                try: chat = await client.get_chat(int(t))
+                except: chat = await client.get_chat(f"@{t}")
                 
                 info = {
-                    'id': chat.id,
-                    'username': chat.username or '',
-                    'name': chat.title or str(chat.id),
-                    'type': str(chat.type),
+                    'id': chat.id, 'username': chat.username or '',
+                    'name': chat.title or t, 'type': str(chat.type),
                     'invite_link': getattr(chat, 'invite_link', '') or ''
                 }
-                
                 ok = await db.add_fj_channel(info)
-                await message.reply(f"✅ Added: {info['name']}" if ok else "❌ Already exists!")
+                await msg.reply(f"✅ {info['name']}" if ok else "❌ Already exists!")
             except Exception as e:
-                await message.reply(f"❌ Error: {e}")
-            
+                await msg.reply(f"❌ Error: {e}")
             admin_states.pop(uid, None)
             return
         
         elif action == 'broadcast':
             users = await db.get_all_users()
-            sent = 0
+            s = 0
             for u in users:
-                try:
-                    await message.copy(u['user_id'])
-                    sent += 1
+                try: await msg.copy(u['user_id']); s += 1
                 except: pass
-            await message.reply(f"📨 Sent to {sent}/{len(users)}")
+            await msg.reply(f"📨 {s}/{len(users)} users")
             admin_states.pop(uid, None)
             return
         
         else:
-            await handle_admin_msg(client, message)
+            await handle_admin_msg(client, msg)
             return
     
     # User add monitor flow
@@ -240,56 +173,53 @@ async def on_all_text(client, message):
         state = user_states[uid].get('waiting')
         
         if state == 'add_url':
-            url = text.strip()
+            url = txt.strip()
             if not url.startswith(('http://', 'https://')):
-                return await message.reply("❌ Invalid URL!")
-            
-            dup = await db.check_duplicate(uid, url)
-            if dup:
-                return await message.reply("❌ Already monitoring!")
+                return await msg.reply("❌ Must start with http:// or https://")
+            if await db.check_duplicate(uid, url):
+                return await msg.reply("❌ Already monitoring this URL!")
             
             user_states[uid]['url'] = url
             user_states[uid]['waiting'] = 'add_name'
-            await message.reply("✅ Send name:")
+            await msg.reply("✅ Send name for this monitor:")
             return
         
         elif state == 'add_name':
-            name = text.strip()
+            name = txt.strip()
             url = user_states[uid].get('url')
-            if not url: return
-            
             limit = await db.get_monitor_limit(uid)
             user = await db.get_user(uid)
+            
             if user and user['monitor_count'] >= limit:
-                return await message.reply(f"❌ Limit: {limit}!")
+                return await msg.reply(f"❌ Limit reached ({limit})!")
             
             interval = await db.get_monitor_duration(uid)
             await db.create_monitor(uid, url, name, interval)
             await db.inc_monitors(uid)
             
             from keyboards_a import back_button
-            await message.reply(f"✅ {name}\n{url}\n⏱{interval}min", reply_markup=back_button("my_monitors"))
+            await msg.reply(f"✅ Added!\n\n📛 {name}\n🔗 {url}\n⏱ {interval}min", reply_markup=back_button("my_monitors"))
             user_states.pop(uid, None)
             return
     
-    # Admin text responses
+    # Admin text messages
     if uid in ADMIN_IDS:
-        await handle_admin_msg(client, message)
+        await handle_admin_msg(client, msg)
 
-# Start bot
+# ============ MAIN ============
 async def main():
-    print("🔄 Starting bot...")
+    print("🔄 Connecting DB...")
     await db.connect()
+    print("🔄 Starting Pyrogram...")
     await client.start()
-    
     me = await client.get_me()
-    print(f"✅ Bot @{me.username} is running!")
+    print(f"✅ Bot @{me.username} is LIVE!")
     
-    s = Scheduler(db, client)
-    s.start()
+    Scheduler(db, client).start()
     print("✅ Scheduler started!")
     
-    await asyncio.get_event_loop().create_future()
+    # Python 3.10+ compatible infinite wait
+    await asyncio.Event().wait()
 
 if __name__ == "__main__":
     Thread(target=run_flask, daemon=True).start()
