@@ -36,14 +36,21 @@ def run_flask():
     port = int(os.getenv('PORT', 8080))
     app.run(host='0.0.0.0', port=port, debug=False)
 
-# States - IMPORTANT: Unique numbers
+# States
 (
-    WAIT_URL, WAIT_NAME,
+    WAIT_URL,
+    WAIT_NAME,
     WAIT_SS,
-    WAIT_PLAN_NAME, WAIT_PLAN_PRICE, WAIT_PLAN_DURATION, WAIT_PLAN_CURRENCY,
+    WAIT_PLAN_NAME,
+    WAIT_PLAN_PRICE,
+    WAIT_PLAN_DURATION,
+    WAIT_PLAN_CURRENCY,
     WAIT_PREMIUM_DAYS,
-    WAIT_REJECT, WAIT_UPI, WAIT_PAYPAL,
-    WAIT_FJ_CHANNEL, WAIT_BROADCAST
+    WAIT_REJECT,
+    WAIT_UPI,
+    WAIT_PAYPAL,
+    WAIT_FJ_CHANNEL,
+    WAIT_BROADCAST
 ) = range(13)
 
 class Bot:
@@ -144,7 +151,8 @@ class Bot:
                 WAIT_URL: [MessageHandler(filters.TEXT & ~filters.COMMAND, uh.get_url)],
                 WAIT_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, uh.get_name)]
             },
-            fallbacks=[CommandHandler('cancel', uh.cancel)]
+            fallbacks=[CommandHandler('cancel', uh.cancel)],
+            per_message=True
         )
         
         # Payment
@@ -156,7 +164,8 @@ class Bot:
             states={
                 WAIT_SS: [MessageHandler(filters.PHOTO, ph.receive_ss)]
             },
-            fallbacks=[CommandHandler('cancel', ph.cancel)]
+            fallbacks=[CommandHandler('cancel', ph.cancel)],
+            per_message=True
         )
         
         # Add Plan
@@ -168,7 +177,8 @@ class Bot:
                 WAIT_PLAN_DURATION: [MessageHandler(filters.TEXT & ~filters.COMMAND, ab.plan_duration)],
                 WAIT_PLAN_CURRENCY: [MessageHandler(filters.TEXT & ~filters.COMMAND, ab.plan_currency)]
             },
-            fallbacks=[CommandHandler('cancel', lambda u, c: ConversationHandler.END)]
+            fallbacks=[CommandHandler('cancel', lambda u, c: ConversationHandler.END)],
+            per_message=True
         )
         
         # Set Premium
@@ -177,7 +187,8 @@ class Bot:
             states={
                 WAIT_PREMIUM_DAYS: [MessageHandler(filters.TEXT & ~filters.COMMAND, aa.set_premium_days)]
             },
-            fallbacks=[CommandHandler('cancel', lambda u, c: ConversationHandler.END)]
+            fallbacks=[CommandHandler('cancel', lambda u, c: ConversationHandler.END)],
+            per_message=True
         )
         
         # Reject Payment
@@ -186,7 +197,8 @@ class Bot:
             states={
                 WAIT_REJECT: [MessageHandler(filters.TEXT & ~filters.COMMAND, ab.reject_reason)]
             },
-            fallbacks=[CommandHandler('cancel', lambda u, c: ConversationHandler.END)]
+            fallbacks=[CommandHandler('cancel', lambda u, c: ConversationHandler.END)],
+            per_message=True
         )
         
         # Edit UPI
@@ -195,7 +207,8 @@ class Bot:
             states={
                 WAIT_UPI: [MessageHandler(filters.TEXT & ~filters.COMMAND, ab.save_upi)]
             },
-            fallbacks=[CommandHandler('cancel', lambda u, c: ConversationHandler.END)]
+            fallbacks=[CommandHandler('cancel', lambda u, c: ConversationHandler.END)],
+            per_message=True
         )
         
         # Edit PayPal
@@ -204,7 +217,8 @@ class Bot:
             states={
                 WAIT_PAYPAL: [MessageHandler(filters.TEXT & ~filters.COMMAND, ab.save_paypal)]
             },
-            fallbacks=[CommandHandler('cancel', lambda u, c: ConversationHandler.END)]
+            fallbacks=[CommandHandler('cancel', lambda u, c: ConversationHandler.END)],
+            per_message=True
         )
         
         # Broadcast
@@ -213,7 +227,8 @@ class Bot:
             states={
                 WAIT_BROADCAST: [MessageHandler(filters.ALL & ~filters.COMMAND, ac.send_broadcast)]
             },
-            fallbacks=[CommandHandler('cancel', lambda u, c: ConversationHandler.END)]
+            fallbacks=[CommandHandler('cancel', lambda u, c: ConversationHandler.END)],
+            per_message=True
         )
         
         # Force Join Add
@@ -222,7 +237,8 @@ class Bot:
             states={
                 WAIT_FJ_CHANNEL: [MessageHandler(filters.ALL & ~filters.COMMAND, ac.fj_receive)]
             },
-            fallbacks=[CommandHandler('cancel', ac.fj_cancel)]
+            fallbacks=[CommandHandler('cancel', ac.fj_cancel)],
+            per_message=True
         )
         
         # Add all conversations
@@ -262,8 +278,10 @@ class Bot:
         
         logger.info("✅ Bot is running!")
         
-        while True:
-            await asyncio.sleep(3600)
+        try:
+            await asyncio.get_event_loop().create_future()
+        except asyncio.CancelledError:
+            pass
 
 async def main():
     bot = Bot()
@@ -276,4 +294,9 @@ async def main():
 
 if __name__ == "__main__":
     Thread(target=run_flask, daemon=True).start()
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        logger.info("Bot stopped")
+    except Exception as e:
+        logger.error(f"Bot crashed: {e}")
