@@ -17,13 +17,12 @@ app = Flask(__name__)
 def home(): return "Bot Running!"
 @app.route('/health')
 def health(): return "OK", 200
-def run_flask(): app.run(host='0.0.0.0', port=PORT, debug=False)
 
 # Client
 client = Client("uptime_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 db = Database()
 
-# ============ IMPORTS (All at top) ============
+# ============ IMPORTS ============
 import handlers_user
 import handlers_payment
 import admin_commands
@@ -32,8 +31,6 @@ import admin_force
 from callbacks_a import *
 from callbacks_b import *
 from callbacks_c import *
-
-# Shared states from callback files
 from callbacks_b import user_states
 from callbacks_c import admin_states, handle_admin_msg
 
@@ -42,17 +39,14 @@ from callbacks_c import admin_states, handle_admin_msg
 async def on_callback(client, cb: CallbackQuery):
     data = cb.data
     uid = cb.from_user.id
-    print(f"📱 Callback: {data} | User: {uid}")
     
     if not await check_force_join(client, cb):
         return
     
-    # User callbacks
     if data == 'profile': await profile_cb(client, cb)
     elif data == 'my_monitors': await my_monitors_cb(client, cb)
     elif data == 'main_menu': await main_menu_cb(client, cb)
     elif data == 'premium_menu': await premium_menu_cb(client, cb)
-    
     elif data == 'add_monitor':
         limit = await db.get_monitor_limit(uid)
         user = await db.get_user(uid)
@@ -61,7 +55,7 @@ async def on_callback(client, cb: CallbackQuery):
             await cb.edit_message_text(f"❌ Limit: {limit}", reply_markup=back_button("main_menu"))
         else:
             user_states[uid] = {'waiting': 'add_url'}
-            await cb.edit_message_text("🔗 Send URL (https://example.com):")
+            await cb.edit_message_text("🔗 Send URL:")
     
     elif data.startswith('detail_'): await monitor_detail_cb(client, cb)
     elif data.startswith('refresh_'): await refresh_cb(client, cb)
@@ -72,7 +66,6 @@ async def on_callback(client, cb: CallbackQuery):
     elif data == 'pay_upi': await pay_upi_cb(client, cb)
     elif data == 'pay_bank': await pay_bank_cb(client, cb)
     
-    # Admin callbacks
     elif data == 'admin_panel': await admin_panel_cb(client, cb)
     elif data == 'admin_users': await admin_users_cb(client, cb)
     elif data.startswith('user_'): await user_detail_cb(client, cb)
@@ -97,7 +90,6 @@ async def on_callback(client, cb: CallbackQuery):
     elif data.startswith('toggleplan_'): await toggle_plan_cb(client, cb)
     elif data == 'edit_methods': await edit_methods_cb(client, cb)
     
-    # FJ callbacks
     elif data == 'fj_menu': await fj_menu_cb(client, cb)
     elif data == 'fj_toggle': await fj_toggle_cb(client, cb)
     elif data.startswith('fj_remove_'):
@@ -108,8 +100,7 @@ async def on_callback(client, cb: CallbackQuery):
         await cb.edit_message_text("📢 Send channel ID or @username:")
     elif data == 'broadcast':
         admin_states[uid] = {'action': 'broadcast'}
-        await cb.edit_message_text("📨 Send message to broadcast:")
-    
+        await cb.edit_message_text("📨 Send message:")
     elif data == 'check_fj':
         from force_check import check_force_join_callback
         await check_force_join_callback(client, cb)
@@ -122,17 +113,12 @@ async def on_message(client, msg: Message):
     uid = msg.from_user.id
     txt = msg.text or ""
     
-    # Skip commands (handled by decorators in other files)
     if txt.startswith('/'): return
     
-    print(f"💬 Message: '{txt[:30]}' | User: {uid}")
-    
-    # Force join check
     if uid not in ADMIN_IDS:
         if not await check_force_join(client, msg):
             return
     
-    # Admin states (FJ add, broadcast)
     if uid in admin_states:
         action = admin_states[uid].get('action')
         
@@ -141,12 +127,7 @@ async def on_message(client, msg: Message):
                 t = txt.strip().replace('@', '')
                 try: chat = await client.get_chat(int(t))
                 except: chat = await client.get_chat(f"@{t}")
-                
-                info = {
-                    'id': chat.id, 'username': chat.username or '',
-                    'name': chat.title or t, 'type': str(chat.type),
-                    'invite_link': getattr(chat, 'invite_link', '') or ''
-                }
+                info = {'id': chat.id, 'username': chat.username or '', 'name': chat.title or t, 'type': str(chat.type), 'invite_link': getattr(chat, 'invite_link', '') or ''}
                 ok = await db.add_fj_channel(info)
                 await msg.reply(f"✅ {info['name']}" if ok else "❌ Already exists!")
             except Exception as e:
@@ -160,7 +141,7 @@ async def on_message(client, msg: Message):
             for u in users:
                 try: await msg.copy(u['user_id']); s += 1
                 except: pass
-            await msg.reply(f"📨 {s}/{len(users)} users")
+            await msg.reply(f"📨 {s}/{len(users)}")
             admin_states.pop(uid, None)
             return
         
@@ -168,20 +149,18 @@ async def on_message(client, msg: Message):
             await handle_admin_msg(client, msg)
             return
     
-    # User add monitor flow
     if uid in user_states:
         state = user_states[uid].get('waiting')
         
         if state == 'add_url':
             url = txt.strip()
             if not url.startswith(('http://', 'https://')):
-                return await msg.reply("❌ Must start with http:// or https://")
+                return await msg.reply("❌ Invalid URL!")
             if await db.check_duplicate(uid, url):
-                return await msg.reply("❌ Already monitoring this URL!")
-            
+                return await msg.reply("❌ Already monitoring!")
             user_states[uid]['url'] = url
             user_states[uid]['waiting'] = 'add_name'
-            await msg.reply("✅ Send name for this monitor:")
+            await msg.reply("✅ Send name:")
             return
         
         elif state == 'add_name':
@@ -189,38 +168,44 @@ async def on_message(client, msg: Message):
             url = user_states[uid].get('url')
             limit = await db.get_monitor_limit(uid)
             user = await db.get_user(uid)
-            
             if user and user['monitor_count'] >= limit:
-                return await msg.reply(f"❌ Limit reached ({limit})!")
-            
+                return await msg.reply(f"❌ Limit: {limit}!")
             interval = await db.get_monitor_duration(uid)
             await db.create_monitor(uid, url, name, interval)
             await db.inc_monitors(uid)
-            
             from keyboards_a import back_button
-            await msg.reply(f"✅ Added!\n\n📛 {name}\n🔗 {url}\n⏱ {interval}min", reply_markup=back_button("my_monitors"))
+            await msg.reply(f"✅ {name}\n{url}\n⏱{interval}min", reply_markup=back_button("my_monitors"))
             user_states.pop(uid, None)
             return
     
-    # Admin text messages
     if uid in ADMIN_IDS:
         await handle_admin_msg(client, msg)
 
 # ============ MAIN ============
-async def main():
-    print("🔄 Connecting DB...")
-    await db.connect()
-    print("🔄 Starting Pyrogram...")
-    await client.start()
-    me = await client.get_me()
-    print(f"✅ Bot @{me.username} is LIVE!")
+def run_bot():
+    """Run bot in separate thread with its own event loop"""
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
     
-    Scheduler(db, client).start()
-    print("✅ Scheduler started!")
+    async def start():
+        print("🔄 Connecting DB...")
+        await db.connect()
+        print("🔄 Starting Pyrogram...")
+        await client.start()
+        me = await client.get_me()
+        print(f"✅ Bot @{me.username} is LIVE!")
+        
+        Scheduler(db, client).start()
+        print("✅ Scheduler started!")
+        
+        await asyncio.Event().wait()
     
-    # Python 3.10+ compatible infinite wait
-    await asyncio.Event().wait()
+    loop.run_until_complete(start())
 
 if __name__ == "__main__":
-    Thread(target=run_flask, daemon=True).start()
-    asyncio.run(main())
+    # Start bot in separate thread
+    bot_thread = Thread(target=run_bot, daemon=True)
+    bot_thread.start()
+    
+    # Run Flask in main thread
+    app.run(host='0.0.0.0', port=PORT, debug=False)
