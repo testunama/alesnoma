@@ -44,7 +44,7 @@ def run_flask():
     WAIT_PREMIUM_DAYS,
     WAIT_REJECT, WAIT_UPI, WAIT_PAYPAL,
     WAIT_FJ_CHANNEL, WAIT_BROADCAST
-) = range(14)
+) = range(13)
 
 class Bot:
     def __init__(self):
