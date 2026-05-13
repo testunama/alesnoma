@@ -2,131 +2,142 @@
 import asyncio
 import logging
 import sys
+import os
 from flask import Flask
 from threading import Thread
 
-from telegram import Update
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ConversationHandler
 
 from motor.motor_asyncio import AsyncIOMotorClient
 from config import BOT_TOKEN, MONGODB_URI, ADMIN_IDS, PORT
 
-# Models
 from models import User, Monitor, PaymentSettings, Payment, ForceJoin
-
-# Handlers
-from handlers_user import UserHandlers
-from handlers_payment import PaymentHandlers
-from admin_a import AdminA
-from admin_b import AdminB
-from admin_c import AdminC
-
-# Utils
-from utils import Scheduler
 from keyboards import main_menu
 
-# States
-WAIT_URL, WAIT_NAME = range(2)
-WAIT_SS = 2
-WAIT_PLAN_NAME, WAIT_PLAN_PRICE, WAIT_PLAN_DURATION, WAIT_PLAN_CURRENCY = range(3, 7)
-WAIT_PREMIUM_DAYS, WAIT_BROADCAST, WAIT_UPI, WAIT_REJECT, WAIT_PAYPAL = range(7, 12)
-WAIT_FJ_CHANNEL = 12
-
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
 
-# Flask for Render
+# Flask
 app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "Bot is running!"
+    return "Bot Running!"
+
+@app.route('/health')
+def health():
+    return "OK", 200
 
 def run_flask():
-    app.run(host='0.0.0.0', port=PORT)
+    port = int(os.getenv('PORT', 8080))
+    app.run(host='0.0.0.0', port=port, debug=False)
+
+# States - IMPORTANT: Unique numbers
+(
+    WAIT_URL, WAIT_NAME,
+    WAIT_SS,
+    WAIT_PLAN_NAME, WAIT_PLAN_PRICE, WAIT_PLAN_DURATION, WAIT_PLAN_CURRENCY,
+    WAIT_PREMIUM_DAYS,
+    WAIT_REJECT, WAIT_UPI, WAIT_PAYPAL,
+    WAIT_FJ_CHANNEL, WAIT_BROADCAST
+) = range(14)
 
 class Bot:
     def __init__(self):
         self.db = None
-        self.application = None
+        self.app = None
     
-    async def init(self):
+    async def init_db(self):
         try:
-            logger.info("Connecting MongoDB...")
-            self.client = AsyncIOMotorClient(MONGODB_URI)
+            logger.info("Connecting to MongoDB...")
+            self.client = AsyncIOMotorClient(MONGODB_URI, serverSelectionTimeoutMS=10000)
             self.db = self.client.uptimebot
-            
             await self.client.admin.command('ping')
             logger.info("✅ MongoDB Connected!")
             
-            # Init defaults
             await PaymentSettings(self.db).init_default()
             await ForceJoin(self.db).init_default()
-            
-            logger.info("✅ Initialized!")
+            return True
         except Exception as e:
-            logger.error(f"❌ Init error: {e}")
-            sys.exit(1)
+            logger.error(f"❌ MongoDB Error: {e}")
+            return False
     
     def build(self):
-        self.application = Application.builder().token(BOT_TOKEN).build()
+        from handlers_user import UserHandlers
+        from handlers_payment import PaymentHandlers
+        from admin_a import AdminA
+        from admin_b import AdminB
+        from admin_c import AdminC
         
-        # Handlers init
         uh = UserHandlers(self.db)
         ph = PaymentHandlers(self.db)
         aa = AdminA(self.db)
         ab = AdminB(self.db)
         ac = AdminC(self.db)
         
-        # Commands
-        self.application.add_handler(CommandHandler('start', uh.start))
-        self.application.add_handler(CommandHandler('help', uh.help_cmd))
+        self.app = Application.builder().token(BOT_TOKEN).build()
         
-        # User callbacks
-        self.application.add_handler(CallbackQueryHandler(uh.profile, pattern='^profile$'))
-        self.application.add_handler(CallbackQueryHandler(uh.help_cmd, pattern='^help$'))
-        self.application.add_handler(CallbackQueryHandler(uh.my_monitors, pattern='^my_monitors$'))
-        self.application.add_handler(CallbackQueryHandler(uh.monitor_detail, pattern='^detail_'))
-        self.application.add_handler(CallbackQueryHandler(uh.refresh_monitor, pattern='^refresh_'))
-        self.application.add_handler(CallbackQueryHandler(uh.toggle_monitor, pattern='^toggle_'))
-        self.application.add_handler(CallbackQueryHandler(uh.delete_monitor, pattern='^delete_'))
-        self.application.add_handler(CallbackQueryHandler(uh.confirm_delete, pattern='^confirmdel_'))
-        self.application.add_handler(CallbackQueryHandler(lambda u,c: u.callback_query.edit_message_text("🏠 Menu", reply_markup=main_menu(u.callback_query.from_user.id in ADMIN_IDS)), pattern='^menu$'))
+        # ============ COMMANDS ============
+        self.app.add_handler(CommandHandler('start', uh.start))
+        self.app.add_handler(CommandHandler('help', uh.help_cmd))
         
-        # Payment callbacks
-        self.application.add_handler(CallbackQueryHandler(ph.premium_menu, pattern='^premium_menu$'))
-        self.application.add_handler(CallbackQueryHandler(ph.select_method, pattern='^buy_'))
-        self.application.add_handler(CallbackQueryHandler(ph.pay_upi, pattern='^pay_upi$'))
-        self.application.add_handler(CallbackQueryHandler(ph.pay_bank, pattern='^pay_bank$'))
+        # ============ USER CALLBACKS ============
+        self.app.add_handler(CallbackQueryHandler(uh.profile, pattern='^profile$'))
+        self.app.add_handler(CallbackQueryHandler(uh.help_cmd, pattern='^help$'))
+        self.app.add_handler(CallbackQueryHandler(uh.my_monitors, pattern='^my_monitors$'))
+        self.app.add_handler(CallbackQueryHandler(uh.monitor_detail, pattern='^detail_'))
+        self.app.add_handler(CallbackQueryHandler(uh.refresh_monitor, pattern='^refresh_'))
+        self.app.add_handler(CallbackQueryHandler(uh.toggle_monitor, pattern='^toggle_'))
+        self.app.add_handler(CallbackQueryHandler(uh.delete_monitor, pattern='^delete_'))
+        self.app.add_handler(CallbackQueryHandler(uh.confirm_delete, pattern='^confirmdel_'))
+        self.app.add_handler(CallbackQueryHandler(
+            lambda u, c: u.callback_query.edit_message_text("🏠 Menu", reply_markup=main_menu(u.callback_query.from_user.id in ADMIN_IDS)),
+            pattern='^menu$'
+        ))
         
-        # Admin A callbacks
-        self.application.add_handler(CallbackQueryHandler(aa.panel, pattern='^admin$'))
-        self.application.add_handler(CallbackQueryHandler(aa.users, pattern='^admin_users$'))
-        self.application.add_handler(CallbackQueryHandler(aa.user_detail, pattern='^user_'))
-        self.application.add_handler(CallbackQueryHandler(aa.ban_user, pattern='^ban_'))
-        self.application.add_handler(CallbackQueryHandler(aa.export_user_monitors, pattern='^exportusr_'))
-        self.application.add_handler(CallbackQueryHandler(aa.monitors, pattern='^admin_monitors$'))
-        self.application.add_handler(CallbackQueryHandler(aa.export_all, pattern='^export_all$'))
-        self.application.add_handler(CallbackQueryHandler(aa.stats, pattern='^admin_stats$'))
+        # ============ PAYMENT CALLBACKS ============
+        self.app.add_handler(CallbackQueryHandler(ph.premium_menu, pattern='^premium_menu$'))
+        self.app.add_handler(CallbackQueryHandler(ph.select_method, pattern='^buy_'))
         
-        # Admin B callbacks
-        self.application.add_handler(CallbackQueryHandler(ab.verify_payments, pattern='^verify_pay$'))
-        self.application.add_handler(CallbackQueryHandler(ab.verify_payment, pattern='^verify_'))
-        self.application.add_handler(CallbackQueryHandler(ab.plans, pattern='^admin_plans$'))
-        self.application.add_handler(CallbackQueryHandler(ab.plan_detail, pattern='^plan_'))
-        self.application.add_handler(CallbackQueryHandler(ab.delete_plan, pattern='^delplan_'))
-        self.application.add_handler(CallbackQueryHandler(ab.toggle_plan, pattern='^toggleplan_'))
-        self.application.add_handler(CallbackQueryHandler(ab.payment_methods, pattern='^edit_methods$'))
-        self.application.add_handler(CallbackQueryHandler(ab.edit_upi, pattern='^edit_upi$'))
-        self.application.add_handler(CallbackQueryHandler(ab.edit_paypal, pattern='^edit_paypal$'))
+        # ============ ADMIN A CALLBACKS ============
+        self.app.add_handler(CallbackQueryHandler(aa.panel, pattern='^admin$'))
+        self.app.add_handler(CallbackQueryHandler(aa.users, pattern='^admin_users$'))
+        self.app.add_handler(CallbackQueryHandler(aa.user_detail, pattern='^user_'))
+        self.app.add_handler(CallbackQueryHandler(aa.ban_user, pattern='^ban_'))
+        self.app.add_handler(CallbackQueryHandler(aa.export_user_monitors, pattern='^exportusr_'))
+        self.app.add_handler(CallbackQueryHandler(aa.monitors, pattern='^admin_monitors$'))
+        self.app.add_handler(CallbackQueryHandler(aa.export_all, pattern='^export_all$'))
+        self.app.add_handler(CallbackQueryHandler(aa.stats, pattern='^admin_stats$'))
+        self.app.add_handler(CallbackQueryHandler(aa.set_premium, pattern='^setprem_'))
         
-        # Admin C callbacks
-        self.application.add_handler(CallbackQueryHandler(ac.fj_menu, pattern='^fj_menu$'))
-        self.application.add_handler(CallbackQueryHandler(ac.fj_toggle, pattern='^fj_toggle$'))
-        self.application.add_handler(CallbackQueryHandler(ac.fj_remove, pattern='^fj_remove_'))
-        self.application.add_handler(CallbackQueryHandler(ac.check_joined_callback, pattern='^check_joined$'))
+        # ============ ADMIN B CALLBACKS ============
+        self.app.add_handler(CallbackQueryHandler(ab.verify_payments, pattern='^verify_pay$'))
+        self.app.add_handler(CallbackQueryHandler(ab.verify_payment, pattern='^verify_'))
+        self.app.add_handler(CallbackQueryHandler(ab.reject_payment, pattern='^reject_'))
+        self.app.add_handler(CallbackQueryHandler(ab.plans, pattern='^admin_plans$'))
+        self.app.add_handler(CallbackQueryHandler(ab.plan_detail, pattern='^plan_'))
+        self.app.add_handler(CallbackQueryHandler(ab.delete_plan, pattern='^delplan_'))
+        self.app.add_handler(CallbackQueryHandler(ab.toggle_plan, pattern='^toggleplan_'))
+        self.app.add_handler(CallbackQueryHandler(ab.payment_methods, pattern='^edit_methods$'))
+        self.app.add_handler(CallbackQueryHandler(ab.edit_upi, pattern='^edit_upi$'))
+        self.app.add_handler(CallbackQueryHandler(ab.edit_paypal, pattern='^edit_paypal$'))
+        self.app.add_handler(CallbackQueryHandler(ab.add_plan, pattern='^addplan$'))
         
-        # Conversations
+        # ============ ADMIN C CALLBACKS ============
+        self.app.add_handler(CallbackQueryHandler(ac.fj_menu, pattern='^fj_menu$'))
+        self.app.add_handler(CallbackQueryHandler(ac.fj_toggle, pattern='^fj_toggle$'))
+        self.app.add_handler(CallbackQueryHandler(ac.fj_remove, pattern='^fj_remove_'))
+        self.app.add_handler(CallbackQueryHandler(ac.check_joined_callback, pattern='^check_joined$'))
+        self.app.add_handler(CallbackQueryHandler(ac.fj_add, pattern='^fj_add$'))
+        self.app.add_handler(CallbackQueryHandler(ac.broadcast, pattern='^broadcast$'))
+        
+        # ============ CONVERSATIONS ============
+        
+        # Add Monitor
         add_conv = ConversationHandler(
             entry_points=[CallbackQueryHandler(uh.add_start, pattern='^add_monitor$')],
             states={
@@ -136,16 +147,20 @@ class Bot:
             fallbacks=[CommandHandler('cancel', uh.cancel)]
         )
         
-        payment_conv = ConversationHandler(
+        # Payment
+        pay_conv = ConversationHandler(
             entry_points=[
                 CallbackQueryHandler(ph.pay_upi, pattern='^pay_upi$'),
                 CallbackQueryHandler(ph.pay_bank, pattern='^pay_bank$')
             ],
-            states={WAIT_SS: [MessageHandler(filters.PHOTO, ph.receive_ss)]},
+            states={
+                WAIT_SS: [MessageHandler(filters.PHOTO, ph.receive_ss)]
+            },
             fallbacks=[CommandHandler('cancel', ph.cancel)]
         )
         
-        add_plan_conv = ConversationHandler(
+        # Add Plan
+        plan_conv = ConversationHandler(
             entry_points=[CallbackQueryHandler(ab.add_plan, pattern='^addplan$')],
             states={
                 WAIT_PLAN_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, ab.plan_name)],
@@ -153,90 +168,112 @@ class Bot:
                 WAIT_PLAN_DURATION: [MessageHandler(filters.TEXT & ~filters.COMMAND, ab.plan_duration)],
                 WAIT_PLAN_CURRENCY: [MessageHandler(filters.TEXT & ~filters.COMMAND, ab.plan_currency)]
             },
-            fallbacks=[CommandHandler('cancel', lambda u,c: ConversationHandler.END)]
+            fallbacks=[CommandHandler('cancel', lambda u, c: ConversationHandler.END)]
         )
         
-        set_prem_conv = ConversationHandler(
+        # Set Premium
+        prem_conv = ConversationHandler(
             entry_points=[CallbackQueryHandler(aa.set_premium, pattern='^setprem_')],
-            states={WAIT_PREMIUM_DAYS: [MessageHandler(filters.TEXT & ~filters.COMMAND, aa.set_premium_days)]},
-            fallbacks=[CommandHandler('cancel', lambda u,c: ConversationHandler.END)]
+            states={
+                WAIT_PREMIUM_DAYS: [MessageHandler(filters.TEXT & ~filters.COMMAND, aa.set_premium_days)]
+            },
+            fallbacks=[CommandHandler('cancel', lambda u, c: ConversationHandler.END)]
         )
         
-        reject_conv = ConversationHandler(
+        # Reject Payment
+        rej_conv = ConversationHandler(
             entry_points=[CallbackQueryHandler(ab.reject_payment, pattern='^reject_')],
-            states={WAIT_REJECT: [MessageHandler(filters.TEXT & ~filters.COMMAND, ab.reject_reason)]},
-            fallbacks=[CommandHandler('cancel', lambda u,c: ConversationHandler.END)]
+            states={
+                WAIT_REJECT: [MessageHandler(filters.TEXT & ~filters.COMMAND, ab.reject_reason)]
+            },
+            fallbacks=[CommandHandler('cancel', lambda u, c: ConversationHandler.END)]
         )
         
+        # Edit UPI
         upi_conv = ConversationHandler(
             entry_points=[CallbackQueryHandler(ab.edit_upi, pattern='^edit_upi$')],
-            states={WAIT_UPI: [MessageHandler(filters.TEXT & ~filters.COMMAND, ab.save_upi)]},
-            fallbacks=[CommandHandler('cancel', lambda u,c: ConversationHandler.END)]
+            states={
+                WAIT_UPI: [MessageHandler(filters.TEXT & ~filters.COMMAND, ab.save_upi)]
+            },
+            fallbacks=[CommandHandler('cancel', lambda u, c: ConversationHandler.END)]
         )
         
-        paypal_conv = ConversationHandler(
+        # Edit PayPal
+        pp_conv = ConversationHandler(
             entry_points=[CallbackQueryHandler(ab.edit_paypal, pattern='^edit_paypal$')],
-            states={WAIT_PAYPAL: [MessageHandler(filters.TEXT & ~filters.COMMAND, ab.save_paypal)]},
-            fallbacks=[CommandHandler('cancel', lambda u,c: ConversationHandler.END)]
+            states={
+                WAIT_PAYPAL: [MessageHandler(filters.TEXT & ~filters.COMMAND, ab.save_paypal)]
+            },
+            fallbacks=[CommandHandler('cancel', lambda u, c: ConversationHandler.END)]
         )
         
-        broadcast_conv = ConversationHandler(
+        # Broadcast
+        broad_conv = ConversationHandler(
             entry_points=[CallbackQueryHandler(ac.broadcast, pattern='^broadcast$')],
-            states={WAIT_BROADCAST: [MessageHandler(filters.ALL & ~filters.COMMAND, ac.send_broadcast)]},
-            fallbacks=[CommandHandler('cancel', lambda u,c: ConversationHandler.END)]
+            states={
+                WAIT_BROADCAST: [MessageHandler(filters.ALL & ~filters.COMMAND, ac.send_broadcast)]
+            },
+            fallbacks=[CommandHandler('cancel', lambda u, c: ConversationHandler.END)]
         )
         
+        # Force Join Add
         fj_conv = ConversationHandler(
             entry_points=[CallbackQueryHandler(ac.fj_add, pattern='^fj_add$')],
-            states={WAIT_FJ_CHANNEL: [MessageHandler(filters.ALL & ~filters.COMMAND, ac.fj_receive)]},
+            states={
+                WAIT_FJ_CHANNEL: [MessageHandler(filters.ALL & ~filters.COMMAND, ac.fj_receive)]
+            },
             fallbacks=[CommandHandler('cancel', ac.fj_cancel)]
         )
         
         # Add all conversations
-        self.application.add_handler(add_conv)
-        self.application.add_handler(payment_conv)
-        self.application.add_handler(add_plan_conv)
-        self.application.add_handler(set_prem_conv)
-        self.application.add_handler(reject_conv)
-        self.application.add_handler(upi_conv)
-        self.application.add_handler(paypal_conv)
-        self.application.add_handler(broadcast_conv)
-        self.application.add_handler(fj_conv)
+        self.app.add_handler(add_conv)
+        self.app.add_handler(pay_conv)
+        self.app.add_handler(plan_conv)
+        self.app.add_handler(prem_conv)
+        self.app.add_handler(rej_conv)
+        self.app.add_handler(upi_conv)
+        self.app.add_handler(pp_conv)
+        self.app.add_handler(broad_conv)
+        self.app.add_handler(fj_conv)
         
-        self.application.add_error_handler(self.error)
-        logger.info("✅ Bot built!")
+        # Error handler
+        self.app.add_error_handler(self.error_handler)
+        
+        logger.info("✅ Bot built successfully!")
     
-    async def error(self, update: Update, context):
-        logger.error(f"Error: {context.error}")
+    async def error_handler(self, update: Update, context):
+        logger.error(f"Update {update} caused error: {context.error}")
         try:
             if update and update.callback_query:
-                await update.callback_query.answer("Error occurred!")
-        except: pass
+                await update.callback_query.answer("⚠️ Error occurred. Try again!")
+        except:
+            pass
     
-    async def run(self):
-        await self.init()
-        self.build()
+    async def start_bot(self):
+        from utils import Scheduler
         
-        # Start scheduler
-        scheduler = Scheduler(self.db, self.application.bot)
+        scheduler = Scheduler(self.db, self.app.bot)
         scheduler.start()
         
-        # Start bot
-        await self.application.bot.delete_webhook(drop_pending_updates=True)
-        await self.application.initialize()
-        await self.application.start()
-        await self.application.updater.start_polling()
+        await self.app.bot.delete_webhook(drop_pending_updates=True)
+        await self.app.initialize()
+        await self.app.start()
+        await self.app.updater.start_polling()
         
-        logger.info("✅ Bot running!")
+        logger.info("✅ Bot is running!")
         
-        # Keep alive
         while True:
             await asyncio.sleep(3600)
 
-if __name__ == "__main__":
-    # Start Flask
-    Thread(target=run_flask).start()
-    
-    # Start bot
+async def main():
     bot = Bot()
-    asyncio.run(bot.run())
+    if await bot.init_db():
+        bot.build()
+        await bot.start_bot()
+    else:
+        logger.error("❌ Failed to initialize. Exiting...")
+        sys.exit(1)
+
+if __name__ == "__main__":
+    Thread(target=run_flask, daemon=True).start()
+    asyncio.run(main())
