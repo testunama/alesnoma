@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import asyncio, sys, os
+import asyncio, sys, os, logging
 from flask import Flask
 from threading import Thread
 from pyrogram import Client, filters
@@ -9,7 +9,11 @@ from config import API_ID, API_HASH, BOT_TOKEN, PORT, ADMIN_IDS
 from utils import Scheduler
 from force_check import check_force_join
 
-print(f"🔧 API_ID={API_ID}, PORT={PORT}, ADMINS={ADMIN_IDS}")
+# Logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
+logger = logging.getLogger(__name__)
+
+logger.info(f"API_ID={API_ID}, PORT={PORT}")
 
 # Flask
 app = Flask(__name__)
@@ -18,8 +22,17 @@ def home(): return "Bot Running!"
 @app.route('/health')
 def health(): return "OK", 200
 
-# Client
-client = Client("uptime_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
+# Pyrogram Client - IN MEMORY SESSION
+client = Client(
+    name=":memory:",  # ⬅️ Memory session, no file
+    api_id=API_ID,
+    api_hash=API_HASH,
+    bot_token=BOT_TOKEN,
+    workers=1,
+    sleep_threshold=10,
+    connect_timeout=30
+)
+
 db = Database()
 
 # ============ IMPORTS ============
@@ -112,7 +125,6 @@ async def on_callback(client, cb: CallbackQuery):
 async def on_message(client, msg: Message):
     uid = msg.from_user.id
     txt = msg.text or ""
-    
     if txt.startswith('/'): return
     
     if uid not in ADMIN_IDS:
@@ -121,7 +133,6 @@ async def on_message(client, msg: Message):
     
     if uid in admin_states:
         action = admin_states[uid].get('action')
-        
         if action == 'fj_add':
             try:
                 t = txt.strip().replace('@', '')
@@ -134,7 +145,6 @@ async def on_message(client, msg: Message):
                 await msg.reply(f"❌ Error: {e}")
             admin_states.pop(uid, None)
             return
-        
         elif action == 'broadcast':
             users = await db.get_all_users()
             s = 0
@@ -144,14 +154,12 @@ async def on_message(client, msg: Message):
             await msg.reply(f"📨 {s}/{len(users)}")
             admin_states.pop(uid, None)
             return
-        
         else:
             await handle_admin_msg(client, msg)
             return
     
     if uid in user_states:
         state = user_states[uid].get('waiting')
-        
         if state == 'add_url':
             url = txt.strip()
             if not url.startswith(('http://', 'https://')):
@@ -162,7 +170,6 @@ async def on_message(client, msg: Message):
             user_states[uid]['waiting'] = 'add_name'
             await msg.reply("✅ Send name:")
             return
-        
         elif state == 'add_name':
             name = txt.strip()
             url = user_states[uid].get('url')
@@ -182,30 +189,25 @@ async def on_message(client, msg: Message):
         await handle_admin_msg(client, msg)
 
 # ============ MAIN ============
-def run_bot():
-    """Run bot in separate thread with its own event loop"""
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
+async def main():
+    logger.info("Connecting DB...")
+    await db.connect()
     
-    async def start():
-        print("🔄 Connecting DB...")
-        await db.connect()
-        print("🔄 Starting Pyrogram...")
+    logger.info("Starting Pyrogram client...")
+    try:
         await client.start()
         me = await client.get_me()
-        print(f"✅ Bot @{me.username} is LIVE!")
+        logger.info(f"✅ Bot @{me.username} LIVE!")
         
         Scheduler(db, client).start()
-        print("✅ Scheduler started!")
+        logger.info("✅ Scheduler started!")
         
         await asyncio.Event().wait()
-    
-    loop.run_until_complete(start())
+    except Exception as e:
+        logger.error(f"❌ Pyrogram Error: {e}")
+        logger.error("Check API_ID, API_HASH, BOT_TOKEN!")
+        sys.exit(1)
 
 if __name__ == "__main__":
-    # Start bot in separate thread
-    bot_thread = Thread(target=run_bot, daemon=True)
-    bot_thread.start()
-    
-    # Run Flask in main thread
-    app.run(host='0.0.0.0', port=PORT, debug=False)
+    Thread(target=lambda: app.run(host='0.0.0.0', port=PORT, debug=False), daemon=True).start()
+    asyncio.run(main())
