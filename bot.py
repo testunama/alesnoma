@@ -9,7 +9,6 @@ from config import API_ID, API_HASH, BOT_TOKEN, PORT, ADMIN_IDS
 from utils import Scheduler
 from force_check import check_force_join
 
-# Logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
 logger = logging.getLogger(__name__)
 
@@ -22,15 +21,12 @@ def home(): return "Bot Running!"
 @app.route('/health')
 def health(): return "OK", 200
 
-# Pyrogram Client - IN MEMORY SESSION
+# Pyrogram Client (Default workers)
 client = Client(
-    name=":memory:",  # ⬅️ Memory session, no file
+    name=":memory:",
     api_id=API_ID,
     api_hash=API_HASH,
-    bot_token=BOT_TOKEN,
-    workers=1,
-    sleep_threshold=10,
-    connect_timeout=30
+    bot_token=BOT_TOKEN
 )
 
 db = Database()
@@ -193,20 +189,15 @@ async def main():
     logger.info("Connecting DB...")
     await db.connect()
     
-    logger.info("Starting Pyrogram client...")
-    try:
-        await client.start()
-        me = await client.get_me()
-        logger.info(f"✅ Bot @{me.username} LIVE!")
-        
-        Scheduler(db, client).start()
-        logger.info("✅ Scheduler started!")
-        
-        await asyncio.Event().wait()
-    except Exception as e:
-        logger.error(f"❌ Pyrogram Error: {e}")
-        logger.error("Check API_ID, API_HASH, BOT_TOKEN!")
-        sys.exit(1)
+    logger.info("Starting Pyrogram...")
+    await client.start()
+    me = await client.get_me()
+    logger.info(f"✅ Bot @{me.username} LIVE!")
+    
+    Scheduler(db, client).start()
+    logger.info("✅ Scheduler started!")
+    
+    await asyncio.Event().wait()
 
 if __name__ == "__main__":
     Thread(target=lambda: app.run(host='0.0.0.0', port=PORT, debug=False), daemon=True).start()
